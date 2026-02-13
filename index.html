@@ -126,8 +126,13 @@
                 <span id="current-tab-label" class="text-white uppercase font-black italic tracking-widest">Tvorba</span>
             </div>
             <div class="flex items-center gap-4">
-                <div id="user-badge" class="hidden flex items-center gap-2 bg-amber-500/10 px-3 py-1.5 rounded-full text-[10px] font-bold border border-amber-500/20 text-amber-500 uppercase">
-                    <i data-lucide="crown" class="w-3 h-3"></i> PRO
+                <div id="subscription-info" class="flex items-center gap-2">
+                    <div id="user-badge" class="hidden flex items-center gap-2 bg-amber-500/10 px-3 py-1.5 rounded-full text-[10px] font-bold border border-amber-500/20 text-amber-500 uppercase">
+                        <i data-lucide="crown" class="w-3 h-3"></i> <span id="badge-plan-name">PRO</span>
+                    </div>
+                    <div id="expiry-display" class="hidden text-[9px] font-black text-gray-500 uppercase tracking-tighter bg-white/5 px-2 py-1.5 rounded-full border border-white/5">
+                        Končí: <span id="expiry-date-text">--</span>
+                    </div>
                 </div>
                 <div class="flex items-center gap-2 bg-green-500/10 px-3 py-1.5 rounded-full text-xs font-bold border border-green-500/20 text-green-500">
                     <i data-lucide="banknote" class="w-4 h-4"></i>
@@ -421,7 +426,7 @@
 
     <script>
         // --- DATABASE & ENGINE CONFIG ---
-        const DB_NAME = 'KieSunoVault_Final_v3'; 
+        const DB_NAME = 'KieSunoVault_Final_v5'; 
         const TRACK_STORE = 'tracks';
         const SETTINGS_STORE = 'settings';
         const CODES_STORE = 'codes';
@@ -446,7 +451,7 @@
 
         function initDB() {
             return new Promise((resolve, reject) => {
-                const request = indexedDB.open(DB_NAME, 3);
+                const request = indexedDB.open(DB_NAME, 5);
                 request.onupgradeneeded = (e) => {
                     const db = e.target.result;
                     if (!db.objectStoreNames.contains(TRACK_STORE)) db.createObjectStore(TRACK_STORE, { keyPath: 'id' });
@@ -477,7 +482,7 @@
         let walletBalance = 0, monthlyRate = 6.00, walletLevel = 1, lastWalletUpdate = Date.now();
         let apiKey = '', sunoKey = '', cortexKey = '', currentPlan = 'Free', userCredits = 50, currentTab = 'create';
         let selectedVoiceId = 'Kore', selectedModelId = 'V3_5', currentPlayingTrack = null, isInstrumental = false, isCustomMode = false;
-        let checkoutMethod = 'card', lastFreeRecharge = Date.now();
+        let checkoutMethod = 'card', lastFreeRecharge = Date.now(), expiryDate = null;
 
         window.onload = async () => {
             await initDB();
@@ -486,7 +491,8 @@
             cortexKey = await getFromDB(SETTINGS_STORE, 'cortex_api_key') || '';
             currentPlan = await getFromDB(SETTINGS_STORE, 'user_plan') || 'Free';
             userCredits = await getFromDB(SETTINGS_STORE, 'user_credits');
-            // If credits null, set to 50
+            expiryDate = await getFromDB(SETTINGS_STORE, 'expiry_date') || null;
+
             if (userCredits === null || userCredits === undefined) userCredits = 50;
 
             walletBalance = await getFromDB(SETTINGS_STORE, 'wallet_balance') || 0;
@@ -497,7 +503,8 @@
 
             refreshUI();
             setInterval(updateWallet, 100);
-            setInterval(checkCreditRecharge, 60000); // Každú minútu kontrola
+            setInterval(checkSubscriptionExpiry, 30000); 
+            setInterval(checkCreditRecharge, 60000); 
             lucide.createIcons();
         };
 
@@ -522,6 +529,35 @@
                 const el = document.getElementById(id);
                 if (el) el.innerText = value;
             }
+
+            if (expiryDate && currentPlan !== 'Free') {
+                const dateText = document.getElementById('expiry-date-text');
+                const display = document.getElementById('expiry-display');
+                if (dateText) dateText.innerText = new Date(expiryDate).toLocaleString('sk-SK');
+                if (display) display.classList.remove('hidden');
+            } else {
+                const display = document.getElementById('expiry-display');
+                if (display) display.classList.add('hidden');
+            }
+        }
+
+        async function checkSubscriptionExpiry() {
+            if (!expiryDate || currentPlan === 'Free') return;
+            const now = Date.now();
+            if (now > expiryDate) {
+                // RESET TO FREE MODE
+                currentPlan = 'Free';
+                expiryDate = null;
+                userCredits = 50; // RESET KREDITOV NA BEZPLATNÚ VERZIU
+                
+                await saveToDB(SETTINGS_STORE, currentPlan, 'user_plan');
+                await saveToDB(SETTINGS_STORE, null, 'expiry_date');
+                await saveToDB(SETTINGS_STORE, userCredits, 'user_credits');
+                
+                refreshUI();
+                renderModels();
+                alert("Vaše predplatné vypršalo. Kredity boli vrátené na základnú hodnotu 50 Kr. pre bezplatnú verziu.");
+            }
         }
 
         async function checkCreditRecharge() {
@@ -534,7 +570,6 @@
                     await saveToDB(SETTINGS_STORE, userCredits, 'user_credits');
                     await saveToDB(SETTINGS_STORE, lastFreeRecharge, 'last_free_recharge');
                     refreshUI();
-                    console.log("Kredity boli obnovené (50 Kr.)");
                 }
             }
         }
@@ -558,7 +593,7 @@
             await saveToDB(SETTINGS_STORE, sunoKey, 'suno_api_key');
             await saveToDB(SETTINGS_STORE, cortexKey, 'cortex_api_key');
             checkApiKey();
-            alert("Všetky kľúče boli permanentne uložené.");
+            alert("Kľúče uložené.");
         }
 
         function checkApiKey() {
@@ -570,52 +605,37 @@
                 if(dot) dot.className="w-2 h-2 rounded-full bg-yellow-500"; 
                 if(txt) txt.innerText="AUTH REQUIRED"; 
             }
-            const apiInp = document.getElementById('api-key-input');
-            const sunoInp = document.getElementById('suno-key-input');
-            const cortexInp = document.getElementById('cortex-key-input');
+            const apiInp = document.getElementById('api-key-input'), sunoInp = document.getElementById('suno-key-input'), cortexInp = document.getElementById('cortex-key-input');
             if(apiInp) apiInp.value = apiKey;
             if(sunoInp) sunoInp.value = sunoKey;
             if(cortexInp) cortexInp.value = cortexKey;
         }
 
         function updateSubscriptionUI() {
-            const badge = document.getElementById('user-badge');
+            const badge = document.getElementById('user-badge'), badgeName = document.getElementById('badge-plan-name');
             if(badge) {
-                if(currentPlan !== 'Free') { 
-                    badge.classList.remove('hidden'); 
-                    badge.innerHTML = `<i data-lucide="crown" class="w-3 h-3"></i> ${currentPlan} Member`; 
-                } else {
-                    badge.classList.add('hidden');
-                }
+                if(currentPlan !== 'Free') { badge.classList.remove('hidden'); if(badgeName) badgeName.innerText = currentPlan; }
+                else badge.classList.add('hidden');
             }
             lucide.createIcons();
         }
 
         async function generateMusic() {
             const model = SUNO_MODELS.find(m => m.id === selectedModelId);
-            if(model.pro && currentPlan === 'Free') {
-                alert("Vybraný model vyžaduje predplatné. Prejdite do sekcie Subscription.");
-                return switchTab('plans');
-            }
-
+            if(model.pro && currentPlan === 'Free') { alert("Tento model vyžaduje PRO."); return switchTab('plans'); }
             if(!apiKey) return switchTab('settings');
-            if(userCredits < 10) return alert("Nedostatok kreditov. Music Gen stojí 10 Kr.");
-            
+            if(userCredits < 10) return alert("Málo kreditov.");
             const prompt = document.getElementById('prompt-input').value.trim();
-            if(!prompt) return alert("Zadajte prompt.");
-            
+            if(!prompt) return;
             setMusicLoading(true);
             try {
                 const response = await fetch("https://api.sunoapi.org/api/v1/generate", {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-                    body: JSON.stringify({ prompt: (selectedModelId==='V6_ALPHA'? '[Ultra HD] ' : '') + prompt, model: selectedModelId, make_instrumental: isInstrumental })
+                    method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+                    body: JSON.stringify({ prompt: (selectedModelId==='V6_ALPHA'? '[V6 Engine] ' : '') + prompt, model: selectedModelId, make_instrumental: isInstrumental })
                 });
                 const res = await response.json();
                 if(res.code === 200) {
-                    userCredits -= 10;
-                    await saveToDB(SETTINGS_STORE, userCredits, 'user_credits');
-                    refreshUI();
+                    userCredits -= 10; await saveToDB(SETTINGS_STORE, userCredits, 'user_credits'); refreshUI();
                     pollSuno(res.data.taskId);
                 } else alert(res.msg);
             } catch(e) { alert("API Error."); }
@@ -625,25 +645,12 @@
         async function pollSuno(taskId) {
             const interval = setInterval(async () => {
                 try {
-                    const response = await fetch(`https://api.sunoapi.org/api/v1/generate/record-info?taskId=${taskId}`, {
-                        headers: { 'Authorization': `Bearer ${apiKey}` }
-                    });
+                    const response = await fetch(`https://api.sunoapi.org/api/v1/generate/record-info?taskId=${taskId}`, { headers: { 'Authorization': `Bearer ${apiKey}` } });
                     const res = await response.json();
                     if (res.code === 200 && res.data?.response?.sunoData?.[0]?.audio_url) {
                         const d = res.data.response.sunoData[0];
-                        const newTrack = { 
-                            id: taskId, 
-                            status: 'complete', 
-                            title: d.title || "Untitled", 
-                            audio_url: d.audio_url, 
-                            image_url: d.image_url, 
-                            duration: d.duration, 
-                            model: selectedModelId, 
-                            createTime: new Date().toLocaleDateString() 
-                        };
-                        await saveToDB(TRACK_STORE, newTrack);
-                        updateUI(); 
-                        if (currentTab === 'library') renderLibrary();
+                        await saveToDB(TRACK_STORE, { id: taskId, status: 'complete', title: d.title || "Untitled", audio_url: d.audio_url, image_url: d.image_url, duration: d.duration, model: selectedModelId, createTime: new Date().toLocaleDateString() });
+                        updateUI(); if (currentTab === 'library') renderLibrary();
                         clearInterval(interval);
                     }
                 } catch (e) {}
@@ -653,28 +660,23 @@
         function calculateTTSPrice() {
             const text = document.getElementById('tts-input').value;
             const base = 10;
-            // +1 kredity za každých 100 znakov nad 200
             const bonus = text.length > 200 ? Math.floor((text.length - 200) / 100) : 0;
             return base + bonus;
         }
 
         function updateTTSPrice() {
-            const price = calculateTTSPrice();
             const el = document.getElementById('tts-cost-display');
-            if (el) el.innerText = price;
+            if (el) el.innerText = calculateTTSPrice();
         }
 
         async function generateSpeech() {
             if(!cortexKey) return switchTab('settings');
             const cost = calculateTTSPrice();
-            if(userCredits < cost) return alert(`Nedostatok kreditov. Toto generovanie stojí ${cost} Kr.`);
-            
+            if(userCredits < cost) return alert(`Nedostatok kreditov (${cost} Kr.)`);
             const text = document.getElementById('tts-input').value.trim();
             if(!text) return;
-
             const btn = document.getElementById('tts-generate-btn');
-            if(btn) { btn.disabled = true; btn.innerText = "Encoding MP3..."; }
-
+            if(btn) { btn.disabled = true; btn.innerText = "Encoding..."; }
             try {
                 const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${cortexKey}`, {
                     method: "POST", headers: { "Content-Type": "application/json" },
@@ -683,33 +685,21 @@
                 const result = await response.json();
                 const pcm = result.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
                 if(pcm) {
-                    userCredits -= cost;
-                    await saveToDB(SETTINGS_STORE, userCredits, 'user_credits');
-                    refreshUI();
-                    
-                    const blob = pcmToWav(pcm, 24000); 
-                    const url = URL.createObjectURL(blob);
-                    const id = "tts-" + Date.now();
-                    await saveToDB(TRACK_STORE, { id, title: "MP3 Voice: " + text.substring(0,15), type: 'speech', audio_url: url, model: selectedVoiceId, createTime: new Date().toLocaleDateString(), image_url: 'https://images.unsplash.com/photo-1516280440614-37939bbacd81?w=200' });
-                    updateUI(); alert("Speech generovaný a uložený do knižnice.");
+                    userCredits -= cost; await saveToDB(SETTINGS_STORE, userCredits, 'user_credits'); refreshUI();
+                    const blob = pcmToWav(pcm, 24000), url = URL.createObjectURL(blob);
+                    await saveToDB(TRACK_STORE, { id: "tts-" + Date.now(), title: "Speech: " + text.substring(0,15), type: 'speech', audio_url: url, model: selectedVoiceId, createTime: new Date().toLocaleDateString(), image_url: 'https://images.unsplash.com/photo-1516280440614-37939bbacd81?w=200' });
+                    updateUI(); alert("Speech generovaný.");
                 }
-            } catch(e) { alert("Speech Engine Error."); }
+            } catch(e) { alert("Error."); }
             finally { if(btn) { btn.disabled = false; btn.innerText = "Render Speech"; } }
         }
 
         async function downloadWithCredits() {
             if(!currentPlayingTrack) return;
-            if(userCredits < 2) return alert("Sťahovanie stojí 2 Kr. Zakúpte si kredity.");
-            
-            if(confirm(`Sťahovanie "${currentPlayingTrack.title}" v MP3 formáte vás bude stáť 2 kredity. Pokračovať?`)) {
-                userCredits -= 2;
-                await saveToDB(SETTINGS_STORE, userCredits, 'user_credits');
-                refreshUI();
-                
-                const link = document.createElement('a');
-                link.href = currentPlayingTrack.audio_url;
-                link.download = currentPlayingTrack.title.replace(/\s+/g, '_') + '.mp3';
-                link.click();
+            if(userCredits < 2) return alert("Sťahovanie stojí 2 Kr.");
+            if(confirm(`Stiahnuť MP3 za 2 kredity?`)) {
+                userCredits -= 2; await saveToDB(SETTINGS_STORE, userCredits, 'user_credits'); refreshUI();
+                const link = document.createElement('a'); link.href = currentPlayingTrack.audio_url; link.download = currentPlayingTrack.title + '.mp3'; link.click();
             }
         }
 
@@ -724,7 +714,7 @@
         }
 
         async function buyCode(amount) {
-            if(walletBalance < amount) return alert("Nedostatok peňazí v peňaženke.");
+            if(walletBalance < amount) return alert("Nedostatok v peňaženke.");
             walletBalance -= amount;
             let code = ""; for(let i=0; i<16; i++) code += Math.floor(Math.random()*10);
             await saveToDB(CODES_STORE, { code, amount, date: new Date().toLocaleString() });
@@ -736,233 +726,67 @@
             if (checkoutMethod === 'code') {
                 const codeInp = document.getElementById('redeem-code-input');
                 const code = codeInp ? codeInp.value.trim() : "";
-                if(code.length !== 16) return alert("Zadajte platný 16-miestny kód.");
-            } else if (checkoutMethod === 'card') {
-                // Simulácia spracovania karty
+                if(code.length !== 16) return alert("Zadajte 16-miestny kód.");
             }
-
-            const nEl = document.getElementById('checkout-plan-name');
-            const crEl = document.getElementById('checkout-credits-gain');
-            
-            const n = nEl ? nEl.innerText : "Plan";
-            const cr = crEl ? parseInt(crEl.innerText.replace(/\s/g, '')) : 0;
-            
-            currentPlan = n; userCredits += cr;
+            const nEl = document.getElementById('checkout-plan-name'), crEl = document.getElementById('checkout-credits-gain');
+            const n = nEl ? nEl.innerText : "PRO", cr = crEl ? parseInt(crEl.innerText.replace(/\s/g, '')) : 0;
+            const now = Date.now(), durationMap = { 'Weekly': 7 * 24 * 3600 * 1000, 'PRO': 30 * 24 * 3600 * 1000, 'Annual': 365 * 24 * 3600 * 1000, 'Biennial': 730 * 24 * 3600 * 1000 };
+            currentPlan = n; userCredits += cr; expiryDate = now + (durationMap[n] || durationMap['PRO']);
             await saveToDB(SETTINGS_STORE, currentPlan, 'user_plan');
             await saveToDB(SETTINGS_STORE, userCredits, 'user_credits');
-            refreshUI(); closeCheckout();
-            alert(`Plán ${n} úspešne aktivovaný. Pripísaných ${cr} Kr.`);
+            await saveToDB(SETTINGS_STORE, expiryDate, 'expiry_date');
+            refreshUI(); closeCheckout(); renderModels();
+            alert(`Plán ${n} aktivovaný!`);
         }
 
         function switchTab(t) {
-            currentTab = t; 
-            document.querySelectorAll('.tab-content').forEach(e => e.classList.add('hidden'));
-            const target = document.getElementById(`tab-${t}`);
-            if(target) target.classList.remove('hidden');
-            const label = document.getElementById('current-tab-label');
-            if(label) label.innerText = t.toUpperCase();
-            if(t==='library') renderLibrary();
-            if(t==='wallet') loadCodes();
+            currentTab = t; document.querySelectorAll('.tab-content').forEach(e => e.classList.add('hidden'));
+            const target = document.getElementById(`tab-${t}`); if(target) target.classList.remove('hidden');
+            const label = document.getElementById('current-tab-label'); if(label) label.innerText = t.toUpperCase();
+            if(t==='library') renderLibrary(); if(t==='wallet') loadCodes();
         }
 
         async function loadCodes() {
-            const codes = await getFromDB(CODES_STORE);
-            const container = document.getElementById('wallet-codes-list');
+            const codes = await getFromDB(CODES_STORE), container = document.getElementById('wallet-codes-list');
             if(!container) return;
-            if (codes.length === 0) {
-                container.innerHTML = `<div class="text-center py-10 text-gray-600 font-bold uppercase text-[10px] tracking-widest bg-white/[0.02] rounded-[2.5rem] border border-dashed border-white/5">Žiadne kódy v trezore</div>`;
-                return;
-            }
+            if (codes.length === 0) { container.innerHTML = `<div class="text-center py-10 text-gray-600 font-bold uppercase text-[10px] tracking-widest bg-white/[0.02] rounded-[2.5rem] border border-dashed border-white/5">Bez kódov</div>`; return; }
             container.innerHTML = codes.reverse().map(c => `
                 <div class="glass-panel p-5 rounded-2xl border border-white/5 flex justify-between items-center group hover:border-pink-500/30 transition-all shadow-lg">
                     <div><p class="text-[9px] text-gray-500 font-black uppercase tracking-widest">Kód: ${c.amount} €</p><p class="money-text text-white font-bold text-sm tracking-widest">${c.code.match(/.{1,4}/g).join('-')}</p></div>
                     <button onclick="copyToClipboard('${c.code}')" class="p-2 text-pink-500 hover:bg-white/5 rounded-lg"><i data-lucide="copy" class="w-4 h-4"></i></button>
                 </div>
-            `).join('');
-            lucide.createIcons();
+            `).join(''); lucide.createIcons();
         }
 
-        function copyToClipboard(t) { navigator.clipboard.writeText(t).then(() => alert("Kód skopírovaný!")); }
+        function copyToClipboard(t) { navigator.clipboard.writeText(t).then(() => alert("Skopírované!")); }
 
         async function updateUI() {
-            const grid = document.getElementById('recent-grid');
-            if(!grid) return;
-            const tracks = await getFromDB(TRACK_STORE);
-            const recent = tracks.reverse().slice(0, 3);
-            if (recent.length === 0) {
-                grid.innerHTML = '<div class="col-span-full py-10 text-center text-gray-600 font-bold uppercase text-xs tracking-widest">Archív je prázdny.</div>';
-            } else {
-                grid.innerHTML = recent.map(t => `
-                    <div class="bg-[#121212] p-5 rounded-[2rem] border border-white/5 group hover:border-pink-500/30 transition-all animate-slide-up shadow-xl">
-                        <div class="relative aspect-square mb-5 overflow-hidden rounded-3xl bg-black">
-                            <img src="${t.image_url}" class="object-cover w-full h-full opacity-60 group-hover:scale-110 transition-all duration-700">
-                            <div class="absolute inset-0 flex items-center justify-center">
-                                ${t.status === 'complete' ? `<button onclick="playTrack('${t.id}')" class="p-5 bg-white text-black rounded-full shadow-2xl transition-all"><i data-lucide="play" class="fill-black"></i></button>` : `<i data-lucide="loader-2" class="w-8 h-8 text-white animate-spin"></i>`}
-                            </div>
-                        </div>
-                        <h4 class="font-black truncate text-sm text-white uppercase italic">${t.title}</h4>
-                        <p class="text-[9px] text-pink-500 uppercase font-black tracking-widest mt-1">${t.model}</p>
-                    </div>
-                `).join('');
-                lucide.createIcons();
-            }
+            const grid = document.getElementById('recent-grid'); if(!grid) return;
+            const tracks = await getFromDB(TRACK_STORE), recent = tracks.reverse().slice(0, 3);
+            if (recent.length === 0) { grid.innerHTML = '<div class="col-span-full py-10 text-center text-gray-600 font-bold uppercase text-xs tracking-widest">Prázdne.</div>'; }
+            else { grid.innerHTML = recent.map(t => `<div class="bg-[#121212] p-5 rounded-[2rem] border border-white/5 group hover:border-pink-500/30 transition-all animate-slide-up shadow-xl"><div class="relative aspect-square mb-5 overflow-hidden rounded-3xl bg-black"><img src="${t.image_url}" class="object-cover w-full h-full opacity-60 transition-all duration-700"><div class="absolute inset-0 flex items-center justify-center">${t.status === 'complete' ? `<button onclick="playTrack('${t.id}')" class="p-5 bg-white text-black rounded-full shadow-2xl transition-all"><i data-lucide="play" class="fill-black"></i></button>` : `<i data-lucide="loader-2" class="w-8 h-8 text-white animate-spin"></i>`}</div></div><h4 class="font-black truncate text-sm text-white uppercase italic">${t.title}</h4><p class="text-[9px] text-pink-500 uppercase font-black tracking-widest mt-1">${t.model}</p></div>`).join(''); lucide.createIcons(); }
         }
 
         async function renderLibrary() {
-            const data = await getFromDB(TRACK_STORE);
-            const body = document.getElementById('library-table-body');
-            if(!body) return;
-            const countEl = document.getElementById('library-count');
-            if(countEl) countEl.innerText = data.length + " Items";
-            body.innerHTML = data.reverse().map(t => `
-                <tr class="hover:bg-white/[0.03] transition-all group">
-                    <td class="px-10 py-6 flex items-center gap-5"><img src="${t.image_url}" class="w-12 h-12 rounded-xl object-cover"><div class="min-w-0"><p class="font-black text-sm text-white uppercase italic">${t.title}</p></div></td>
-                    <td class="px-8 py-6 text-xs font-black text-gray-500 uppercase tracking-widest">${t.model}</td>
-                    <td class="px-8 py-6 text-xs text-gray-600 font-bold italic">${t.createTime}</td>
-                    <td class="px-10 py-6 text-right"><button onclick="playTrack('${t.id}')" class="p-3 bg-white/5 rounded-2xl text-white hover:bg-pink-500 transition-all"><i data-lucide="play" class="w-4 h-4"></i></button></td>
-                </tr>
-            `).join('');
-            lucide.createIcons();
+            const data = await getFromDB(TRACK_STORE), body = document.getElementById('library-table-body'); if(!body) return;
+            const countEl = document.getElementById('library-count'); if(countEl) countEl.innerText = data.length + " Items";
+            body.innerHTML = data.reverse().map(t => `<tr class="hover:bg-white/[0.03] transition-all group"><td class="px-10 py-6 flex items-center gap-5"><img src="${t.image_url}" class="w-12 h-12 rounded-xl object-cover"><div class="min-w-0"><p class="font-black text-sm text-white uppercase italic">${t.title}</p></div></td><td class="px-8 py-6 text-xs font-black text-gray-500 uppercase tracking-widest">${t.model}</td><td class="px-8 py-6 text-xs text-gray-600 font-bold italic">${t.createTime}</td><td class="px-10 py-6 text-right"><button onclick="playTrack('${t.id}')" class="p-3 bg-white/5 rounded-2xl text-white hover:bg-pink-500 transition-all"><i data-lucide="play" class="w-4 h-4"></i></button></td></tr>`).join(''); lucide.createIcons();
         }
 
-        function playTrack(id) {
-            getFromDB(TRACK_STORE, id).then(t => {
-                if(!t) return; currentPlayingTrack = t;
-                const audio = document.getElementById('main-audio'); 
-                if(audio) { audio.src = t.audio_url; audio.play(); }
-                const bar = document.getElementById('player-bar'), pTitle = document.getElementById('player-title'), pSub = document.getElementById('player-subtitle'), pIcon = document.getElementById('play-icon');
-                if(bar) bar.classList.remove('hidden');
-                if(pTitle) pTitle.innerText = t.title;
-                if(pSub) pSub.innerText = (t.type==='speech'?'Speech Engine':'Music Engine') + ' ' + t.model;
-                if(pIcon) pIcon.setAttribute('data-lucide', 'pause'); 
-                lucide.createIcons();
-            });
-        }
-
-        function togglePlay() {
-            const a = document.getElementById('main-audio'), i = document.getElementById('play-icon');
-            if(!a || !i) return;
-            if(a.paused) { a.play(); i.setAttribute('data-lucide', 'pause'); } else { a.pause(); i.setAttribute('data-lucide', 'play'); }
-            lucide.createIcons();
-        }
-
-        function renderPlans() {
-            const plans = [
-                { n: 'Weekly', p: 3.00, c: 500, f: ['V4 Access', 'Standard Speed'] },
-                { n: 'PRO', p: 11.99, c: 2500, f: ['V6 Alpha', 'Priority Gen', 'HD Mix'], b:true },
-                { n: 'Annual', p: 360.00, c: 50000, f: ['Studio High-Res', 'VIP Rights'] },
-                { n: 'Biennial', p: 649.00, c: 120000, f: ['Lifetime Perks', 'Max Fidelity'] }
-            ];
-            const grid = document.getElementById('plans-grid');
-            if(!grid) return;
-            grid.innerHTML = plans.map(p => `
-                <div class="plan-card glass-panel p-8 rounded-[2.5rem] flex flex-col ${p.b?'border-2 border-pink-500 shadow-2xl shadow-pink-500/10':''}">
-                    <h3 class="text-2xl font-black italic uppercase mb-2 italic tracking-tighter">${p.n}</h3>
-                    <div class="text-3xl font-black italic mb-4">${p.p.toFixed(2)} €</div>
-                    <div class="text-pink-500 text-[10px] font-black uppercase mb-8 italic tracking-widest">+ ${p.c.toLocaleString()} KR.</div>
-                    <div class="space-y-4 flex-1 mb-10">
-                        ${p.f.map(f => `<div class="flex items-center gap-2 text-[10px] font-bold text-gray-500 uppercase italic"><i data-lucide="check" class="w-3 h-3 text-green-500"></i> ${f}</div>`).join('')}
-                    </div>
-                    <button onclick="openCheckout('${p.n}', ${p.p}, ${p.c})" class="w-full py-4 rounded-2xl ${p.b?'suno-gradient':'bg-white/5 border border-white/10'} font-black uppercase text-[10px] tracking-widest transition-all">Select Plan</button>
-                </div>
-            `).join('');
-            lucide.createIcons();
-        }
-
-        function renderModels() {
-            const cont = document.getElementById('model-selector');
-            if(!cont) return;
-            cont.innerHTML = SUNO_MODELS.map(m => `
-                <button onclick="selectModel('${m.id}')" id="model-${m.id}" class="model-card flex justify-between items-center p-4 rounded-2xl border border-white/5 bg-black/40 transition-all ${selectedModelId===m.id?'active':''}">
-                    <div class="text-left font-black uppercase"><p class="text-xs text-white italic tracking-tighter">${m.name}</p><p class="text-[8px] text-gray-500 tracking-widest">${m.desc}</p></div>
-                    ${m.pro ? '<span class="pro-badge">PRO</span>' : '<span class="free-badge">FREE</span>'}
-                </button>
-            `).join('');
-        }
-        function renderVoices() {
-            const cont = document.getElementById('voice-selector');
-            if(!cont) return;
-            cont.innerHTML = AI_VOICES.map(v => `
-                <button onclick="selectVoice('${v.id}')" id="voice-${v.id}" class="voice-card p-4 rounded-2xl border border-white/5 bg-black/40 flex justify-between items-center transition-all ${selectedVoiceId===v.id?'active':''}">
-                    <div class="text-left font-black uppercase tracking-tighter"><p class="text-xs text-white italic">${v.name}</p><p class="text-[8px] text-gray-500 tracking-widest">${v.desc}</p></div>
-                    <span class="pro-badge">PRO</span>
-                </button>
-            `).join('');
-        }
-
+        function playTrack(id) { getFromDB(TRACK_STORE, id).then(t => { if(!t) return; currentPlayingTrack = t; const audio = document.getElementById('main-audio'); if(audio) { audio.src = t.audio_url; audio.play(); } const bar = document.getElementById('player-bar'), pTitle = document.getElementById('player-title'), pSub = document.getElementById('player-subtitle'), pIcon = document.getElementById('play-icon'); if(bar) bar.classList.remove('hidden'); if(pTitle) pTitle.innerText = t.title; if(pSub) pSub.innerText = (t.type==='speech'?'Speech':'Music') + ' ' + t.model; if(pIcon) pIcon.setAttribute('data-lucide', 'pause'); lucide.createIcons(); }); }
+        function togglePlay() { const a = document.getElementById('main-audio'), i = document.getElementById('play-icon'); if(!a || !i) return; if(a.paused) { a.play(); i.setAttribute('data-lucide', 'pause'); } else { a.pause(); i.setAttribute('data-lucide', 'play'); } lucide.createIcons(); }
+        function renderPlans() { const plans = [{ n: 'Weekly', p: 3.00, c: 500, f: ['V4 Access', 'Standard Speed'] }, { n: 'PRO', p: 11.99, c: 2500, f: ['V6 Alpha', 'Priority Gen', 'HD Mix'], b:true }, { n: 'Annual', p: 360.00, c: 50000, f: ['Studio High-Res', 'VIP Rights'] }, { n: 'Biennial', p: 649.00, c: 120000, f: ['Lifetime Perks', 'Max Fidelity'] }]; const grid = document.getElementById('plans-grid'); if(!grid) return; grid.innerHTML = plans.map(p => `<div class="plan-card glass-panel p-8 rounded-[2.5rem] flex flex-col ${p.b?'border-2 border-pink-500 shadow-2xl shadow-pink-500/10':''}"> <h3 class="text-2xl font-black italic uppercase mb-2 italic tracking-tighter">${p.n}</h3> <div class="text-3xl font-black italic mb-4">${p.p.toFixed(2)} €</div> <div class="text-pink-500 text-[10px] font-black uppercase mb-8 italic tracking-widest">+ ${p.c.toLocaleString()} KR.</div> <div class="space-y-4 flex-1 mb-10"> ${p.f.map(f => `<div class="flex items-center gap-2 text-[10px] font-bold text-gray-500 uppercase italic"><i data-lucide="check" class="w-3 h-3 text-green-500"></i> ${f}</div>`).join('')} </div> <button onclick="openCheckout('${p.n}', ${p.p}, ${p.c})" class="w-full py-4 rounded-2xl ${p.b?'suno-gradient':'bg-white/5 border border-white/10'} font-black uppercase text-[10px] tracking-widest transition-all">Select Plan</button> </div>`).join(''); lucide.createIcons(); }
+        function renderModels() { const cont = document.getElementById('model-selector'); if(!cont) return; cont.innerHTML = SUNO_MODELS.map(m => `<button onclick="selectModel('${m.id}')" id="model-${m.id}" class="model-card flex justify-between items-center p-4 rounded-2xl border border-white/5 bg-black/40 transition-all ${selectedModelId===m.id?'active':''}"> <div class="text-left font-black uppercase"><p class="text-xs text-white italic tracking-tighter">${m.name}</p><p class="text-[8px] text-gray-500 tracking-widest">${m.desc}</p></div> ${m.pro ? '<span class="pro-badge">PRO</span>' : '<span class="free-badge">FREE</span>'} </button>`).join(''); }
+        function renderVoices() { const cont = document.getElementById('voice-selector'); if(!cont) return; cont.innerHTML = AI_VOICES.map(v => `<button onclick="selectVoice('${v.id}')" id="voice-${v.id}" class="voice-card p-4 rounded-2xl border border-white/5 bg-black/40 flex justify-between items-center transition-all ${selectedVoiceId===v.id?'active':''}"> <div class="text-left font-black uppercase tracking-tighter"><p class="text-xs text-white italic">${v.name}</p><p class="text-[8px] text-gray-500 tracking-widest">${v.desc}</p></div> <span class="pro-badge">PRO</span> </button>`).join(''); }
         function selectModel(id) { selectedModelId = id; renderModels(); }
         function selectVoice(id) { selectedVoiceId = id; renderVoices(); }
-        function openCheckout(n, p, c) {
-            const nEl = document.getElementById('checkout-plan-name');
-            const pEl = document.getElementById('checkout-price');
-            const cEl = document.getElementById('checkout-credits-gain');
-            const mEl = document.getElementById('checkout-modal');
-            if(nEl) nEl.innerText = n;
-            if(pEl) pEl.innerText = p.toFixed(2) + " €";
-            if(cEl) cEl.innerText = c.toLocaleString();
-            if(mEl) mEl.classList.remove('hidden');
-        }
+        function openCheckout(n, p, c) { const nEl = document.getElementById('checkout-plan-name'), pEl = document.getElementById('checkout-price'), cEl = document.getElementById('checkout-credits-gain'), mEl = document.getElementById('checkout-modal'); if(nEl) nEl.innerText = n; if(pEl) pEl.innerText = p.toFixed(2) + " €"; if(cEl) cEl.innerText = c.toLocaleString(); if(mEl) mEl.classList.remove('hidden'); }
         function closeCheckout() { const el = document.getElementById('checkout-modal'); if(el) el.classList.add('hidden'); }
         function setMusicLoading(l) { const btn = document.getElementById('generate-btn'), txt = document.getElementById('gen-text'); if(btn) btn.disabled = l; if(txt) txt.innerText = l? "PROCESSING..." : "GENERATE (10 Kr.)"; }
-        function setCheckoutMethod(m) { 
-            checkoutMethod = m; 
-            const cardB = document.getElementById('pay-method-card'), payB = document.getElementById('pay-method-paypal'), codeB = document.getElementById('pay-method-code');
-            const cardF = document.getElementById('checkout-card-form'), payF = document.getElementById('checkout-paypal-form'), codeF = document.getElementById('checkout-code-form');
-
-            const btns = [cardB, payB, codeB];
-            btns.forEach(b => b ? b.className = "flex-1 py-3 rounded-xl text-[10px] font-black transition-all text-gray-500 uppercase tracking-widest" : null);
-            
-            if(m === 'card' && cardB) { cardB.className = "flex-1 py-3 rounded-xl text-[10px] font-black transition-all bg-white text-black shadow-2xl"; }
-            if(m === 'paypal' && payB) { payB.className = "flex-1 py-3 rounded-xl text-[10px] font-black transition-all bg-white text-black shadow-2xl"; }
-            if(m === 'code' && codeB) { codeB.className = "flex-1 py-3 rounded-xl text-[10px] font-black transition-all bg-white text-black shadow-2xl"; }
-
-            if(cardF) cardF.classList.toggle('hidden', m !== 'card');
-            if(payF) payF.classList.toggle('hidden', m !== 'paypal');
-            if(codeF) codeF.classList.toggle('hidden', m !== 'code');
-        }
-
-        function toggleInstrumental() {
-            isInstrumental = !isInstrumental;
-            const toggle = document.getElementById('instrumental-toggle'), circle = document.getElementById('toggle-circle');
-            if(toggle) toggle.className = isInstrumental ? 'w-12 h-6 rounded-full bg-pink-500 relative transition-all shadow-lg' : 'w-12 h-6 rounded-full bg-white/10 relative transition-all';
-            if(circle) circle.style.left = isInstrumental ? '30px' : '4px';
-        }
-
-        function setMode(m) {
-            isCustomMode = (m === 'custom');
-            const sB = document.getElementById('mode-simple'), cB = document.getElementById('mode-custom'), fL = document.getElementById('custom-fields');
-            if(sB) sB.className = !isCustomMode ? 'px-6 py-2 rounded-xl text-xs font-black transition-all bg-white/10 text-white shadow-lg' : 'px-6 py-2 rounded-xl text-xs font-black transition-all text-gray-500 uppercase tracking-widest';
-            if(cB) cB.className = isCustomMode ? 'px-6 py-2 rounded-xl text-xs font-black transition-all bg-white/10 text-white shadow-lg' : 'px-6 py-2 rounded-xl text-xs font-black transition-all text-gray-500 uppercase tracking-widest';
-            if(fL) fL.classList.toggle('hidden', !isCustomMode);
-        }
-
+        function setCheckoutMethod(m) { checkoutMethod = m; const cardB = document.getElementById('pay-method-card'), payB = document.getElementById('pay-method-paypal'), codeB = document.getElementById('pay-method-code'), cardF = document.getElementById('checkout-card-form'), payF = document.getElementById('checkout-paypal-form'), codeF = document.getElementById('checkout-code-form'); if(cardB) cardB.className = m === 'card' ? "flex-1 py-3 rounded-xl text-[10px] font-black transition-all bg-white text-black shadow-2xl" : "flex-1 py-3 rounded-xl text-[10px] font-black transition-all text-gray-500 uppercase tracking-widest"; if(payB) payB.className = m === 'paypal' ? "flex-1 py-3 rounded-xl text-[10px] font-black transition-all bg-white text-black shadow-2xl" : "flex-1 py-3 rounded-xl text-[10px] font-black transition-all text-gray-500 uppercase tracking-widest"; if(codeB) codeB.className = m === 'code' ? "flex-1 py-3 rounded-xl text-[10px] font-black transition-all bg-white text-black shadow-2xl" : "flex-1 py-3 rounded-xl text-[10px] font-black transition-all text-gray-500 uppercase tracking-widest"; if(cardF) cardF.classList.toggle('hidden', m !== 'card'); if(payF) payF.classList.toggle('hidden', m !== 'paypal'); if(codeF) codeF.classList.toggle('hidden', m !== 'code'); }
+        function toggleInstrumental() { isInstrumental = !isInstrumental; const toggle = document.getElementById('instrumental-toggle'), circle = document.getElementById('toggle-circle'); if(toggle) toggle.className = isInstrumental ? 'w-12 h-6 rounded-full bg-pink-500 relative transition-all shadow-lg' : 'w-12 h-6 rounded-full bg-white/10 relative transition-all'; if(circle) circle.style.left = isInstrumental ? '30px' : '4px'; }
+        function setMode(m) { isCustomMode = (m === 'custom'); const sB = document.getElementById('mode-simple'), cB = document.getElementById('mode-custom'), fL = document.getElementById('custom-fields'); if(sB) sB.className = !isCustomMode ? 'px-6 py-2 rounded-xl text-xs font-black transition-all bg-white/10 text-white shadow-lg' : 'px-6 py-2 rounded-xl text-xs font-black transition-all text-gray-500 uppercase tracking-widest'; if(cB) cB.className = isCustomMode ? 'px-6 py-2 rounded-xl text-xs font-black transition-all bg-white/10 text-white shadow-lg' : 'px-6 py-2 rounded-xl text-xs font-black transition-all text-gray-500 uppercase tracking-widest'; if(fL) fL.classList.toggle('hidden', !isCustomMode); }
         function seek(e) { const audio = document.getElementById('main-audio'); if(audio && audio.duration) audio.currentTime = (e.offsetX / e.currentTarget.offsetWidth) * audio.duration; }
-
-        const mAudio = document.getElementById('main-audio');
-        if(mAudio) {
-            mAudio.ontimeupdate = function() {
-                const bar = document.getElementById('player-progress'), cur = document.getElementById('player-current'), dur = document.getElementById('player-duration');
-                if(this.duration) {
-                    const p = (this.currentTime / this.duration) * 100;
-                    if(bar) bar.style.width = p + '%';
-                    const m = Math.floor(this.currentTime / 60), s = Math.floor(this.currentTime % 60).toString().padStart(2, '0');
-                    if(cur) cur.innerText = `${m}:${s}`;
-                    const dm = Math.floor(this.duration / 60), ds = Math.floor(this.duration % 60).toString().padStart(2, '0');
-                    if(dur) dur.innerText = `${dm}:${ds}`;
-                }
-            };
-        }
-
-        async function upgradeEarning() {
-            const cost = 12 * Math.pow(2, walletLevel-1);
-            if(walletBalance >= cost) {
-                walletBalance -= cost; walletLevel++; monthlyRate *= 2;
-                await saveToDB(SETTINGS_STORE, walletBalance, 'wallet_balance');
-                await saveToDB(SETTINGS_STORE, walletLevel, 'wallet_level');
-                await saveToDB(SETTINGS_STORE, monthlyRate, 'monthly_rate');
-                refreshUI(); alert("Systém vylepšený!");
-            } else alert("Nedostatok peňazí.");
-        }
     </script>
 </body>
 </html>
