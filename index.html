@@ -311,6 +311,10 @@
                             <label class="block text-[11px] font-black text-gray-500 mb-3 uppercase tracking-[0.2em] italic">Secondary Suno Token</label>
                             <input type="password" id="suno-key-input" class="w-full bg-black border border-white/10 rounded-2xl p-5 text-white outline-none focus:border-pink-500/40 font-mono shadow-inner">
                         </div>
+                        <div>
+                            <label class="block text-[11px] font-black text-gray-500 mb-3 uppercase tracking-[0.2em] italic">Cortex Engine Token (Neural Core)</label>
+                            <input type="password" id="cortex-key-input" class="w-full bg-black border border-white/10 rounded-2xl p-5 text-white outline-none focus:border-pink-500/40 font-mono shadow-inner">
+                        </div>
                     </div>
                     <button onclick="saveApiKey()" class="w-full bg-white text-black font-black py-5 rounded-3xl hover:bg-pink-500 hover:text-white transition-all uppercase tracking-widest text-xs italic shadow-2xl">
                         Sync with Vault
@@ -424,13 +428,14 @@
 
         // --- GLOBAL STATE ---
         let walletBalance = 0, monthlyRate = 6.00, walletLevel = 1, lastWalletUpdate = Date.now();
-        let apiKey = '', sunoKey = '', currentPlan = 'Free', userCredits = 0, currentTab = 'create';
+        let apiKey = '', sunoKey = '', cortexKey = '', currentPlan = 'Free', userCredits = 0, currentTab = 'create';
         let selectedVoiceId = 'Kore', selectedModelId = 'V3_5', currentPlayingTrack = null, isInstrumental = false, isCustomMode = false;
 
         window.onload = async () => {
             await initDB();
             apiKey = await getFromDB(SETTINGS_STORE, 'kie_api_key') || '';
             sunoKey = await getFromDB(SETTINGS_STORE, 'suno_api_key') || '';
+            cortexKey = await getFromDB(SETTINGS_STORE, 'cortex_api_key') || '';
             currentPlan = await getFromDB(SETTINGS_STORE, 'user_plan') || 'Free';
             userCredits = await getFromDB(SETTINGS_STORE, 'user_credits') || 0;
             walletBalance = await getFromDB(SETTINGS_STORE, 'wallet_balance') || 0;
@@ -481,15 +486,17 @@
         async function saveApiKey() {
             apiKey = document.getElementById('api-key-input').value.trim();
             sunoKey = document.getElementById('suno-key-input').value.trim();
+            cortexKey = document.getElementById('cortex-key-input').value.trim();
             await saveToDB(SETTINGS_STORE, apiKey, 'kie_api_key');
             await saveToDB(SETTINGS_STORE, sunoKey, 'suno_api_key');
+            await saveToDB(SETTINGS_STORE, cortexKey, 'cortex_api_key');
             checkApiKey();
             alert("Tokens Synced Permanently.");
         }
 
         function checkApiKey() {
             const dot = document.getElementById('status-dot'), txt = document.getElementById('status-text');
-            if(apiKey || sunoKey) { 
+            if(apiKey || sunoKey || cortexKey) { 
                 if(dot) dot.className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_15px_#22c55e]"; 
                 if(txt) txt.innerText="SECURE CONNECTION"; 
             } else { 
@@ -498,8 +505,10 @@
             }
             const apiInp = document.getElementById('api-key-input');
             const sunoInp = document.getElementById('suno-key-input');
+            const cortexInp = document.getElementById('cortex-key-input');
             if(apiInp) apiInp.value = apiKey;
             if(sunoInp) sunoInp.value = sunoKey;
+            if(cortexInp) cortexInp.value = cortexKey;
         }
 
         function updateSubscriptionUI() {
@@ -569,7 +578,7 @@
         }
 
         async function generateSpeech() {
-            if(!apiKey) return switchTab('settings');
+            if(!cortexKey) return switchTab('settings');
             if(userCredits < 5) return alert("Speech Generation requires 5 Kr.");
             const text = document.getElementById('tts-input').value.trim();
             if(!text) return;
@@ -578,7 +587,7 @@
             if(btn) { btn.disabled = true; btn.innerText = "Encoding MP3..."; }
 
             try {
-                const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${apiKey}`, {
+                const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${cortexKey}`, {
                     method: "POST", headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ contents:[{parts:[{text:text}]}], generationConfig:{responseModalities:["AUDIO"], speechConfig:{voiceConfig:{prebuiltVoiceConfig:{voiceName:selectedVoiceId}}}} })
                 });
